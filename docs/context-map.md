@@ -5,11 +5,13 @@ Use this to keep agent context minimal while still discoverable.
 ## Default
 - Always load: `AGENTS.md` + `docs/project-brief.md` + `docs/architecture.md`
 - Do not load additional files unless required by task scope.
+- Keep spec-related decisions protocol-agnostic unless a task is explicitly adapter-specific.
 
 ## Routing by task
 
 ### Spec registry / fetch / local storage
 - `skills/spec-management.md`
+- For any spec-facing refactor, keep `docs/architecture.md` in active context to enforce adapter isolation invariants.
 
 ### Code generation / targets / determinism
 - `skills/codegen.md`
@@ -22,6 +24,7 @@ Use this to keep agent context minimal while still discoverable.
 
 ### Refactor affecting boundaries or extensibility model
 - Then only the impacted skill docs
+- Always verify shared modules remain protocol-neutral and protocol logic remains in adapters.
 
 ### Product-level direction questions
 - `docs/project-brief.md`

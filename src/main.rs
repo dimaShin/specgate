@@ -1,4 +1,7 @@
 mod cli;
+mod spec_adapters;
+mod spec_fetch;
+mod spec_registry;
 
 use std::process::ExitCode;
 

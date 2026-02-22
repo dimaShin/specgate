@@ -4,7 +4,7 @@ Load this file, `docs/project-brief.md`, and `docs/architecture.md` by default f
 Do not auto-load the full docs set beyond those three files.
 
 ## Project one-liner
-`specgate` is a Rust CLI + runtime for OpenAPI-driven spec management, code generation, proxy/mock serving, runtime validation, and reporting.
+`specgate` is a Rust CLI + runtime for multi-spec (OpenAPI/GraphQL/gRPC) management, code generation, proxy/mock serving, runtime validation, and reporting.
 
 ## Non-negotiables
 - Rust, no `unsafe`.
@@ -12,6 +12,7 @@ Do not auto-load the full docs set beyond those three files.
 - Deterministic, non-interactive CI behavior with stable exit codes.
 - Keep changes small and compiling.
 - Add tests per feature (integration tests for CLI/server behavior).
+- Keep specification concerns protocol-agnostic in shared modules; isolate protocol-specific behavior behind dedicated adapters.
 
 ## Architecture boundaries (must stay separate)
 - CLI layer
@@ -21,6 +22,12 @@ Do not auto-load the full docs set beyond those three files.
 - Validation
 - Recorder
 - Reporting
+
+## Spec support invariants (must hold across all tasks)
+- OpenAPI is an initial adapter, not a global assumption.
+- Design for OpenAPI (all relevant versions), GraphQL, and gRPC without redesign.
+- Shared contracts/types in core modules must not encode protocol-specific fields.
+- Protocol detection/parsing/validation/codegen mapping must live in adapter modules.
 
 ## Context loading policy
 1. Start with `AGENTS.md`, `docs/project-brief.md`, and `docs/architecture.md`.
