@@ -12,6 +12,7 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 ureq = "2"
 url = "2"
+tiny_http = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

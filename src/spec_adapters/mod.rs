@@ -1,5 +1,37 @@
 pub mod openapi;
 
+#[derive(Debug, Clone)]
+pub struct RuntimeRequest {
+    pub method: String,
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationIssue {
+    pub scope: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ValidationOutcome {
+    pub issues: Vec<ValidationIssue>,
+}
+
+impl ValidationOutcome {
+    pub fn is_valid(&self) -> bool {
+        self.issues.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum SpecFormat {
     Json,
@@ -63,5 +95,17 @@ pub fn detect_spec(bytes: &[u8]) -> Result<DetectedSpec, String> {
             "unsupported protocol: unable to detect OpenAPI 3.x. pending adapters: GraphQL, gRPC"
                 .to_string(),
         ),
+    }
+}
+
+pub fn validate_http_exchange(
+    spec_kind: &str,
+    spec_bytes: &[u8],
+    request: &RuntimeRequest,
+    response: &RuntimeResponse,
+) -> Result<ValidationOutcome, String> {
+    match spec_kind {
+        "openapi" => openapi::validate_http_exchange(spec_bytes, request, response),
+        other => Err(format!("validation adapter not implemented for spec kind: {other}")),
     }
 }

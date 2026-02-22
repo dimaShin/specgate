@@ -36,7 +36,8 @@ fn spec_cli_outputs_protocol_neutral_identity_fields() {
 
     assert!(list.status.success());
     let list_out = String::from_utf8_lossy(&list.stdout);
-    assert!(list_out.contains("service\tdigest\tsource_format\tspec_kind\tdeclared_version\tsource"));
+    assert!(list_out.contains("service\tactive\tdigest\tsource_format\tspec_kind\tdeclared_version\tsource"));
+    assert!(list_out.contains("\tyes\t"));
     assert!(list_out.contains("\tjson\topenapi\t3.0.0\t"));
     assert!(!list_out.contains("spec_version"));
 }

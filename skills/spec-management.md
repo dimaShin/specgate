@@ -25,6 +25,7 @@
 ## Acceptance focus
 - Deterministic add/list behavior with stable output ordering.
 - Deterministic local filesystem layout for service + version entries.
+- Active-spec selection is deterministic per service; new ingest auto-activates the latest digest.
 - Clear failure messages for file IO, URL fetch, auth, timeout, and unsupported protocol/version.
 - Output model includes protocol-neutral identity fields (for example: spec kind + declared version) so later adapters do not require schema redesign.
 

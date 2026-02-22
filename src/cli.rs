@@ -1,3 +1,4 @@
+use crate::runtime_server;
 use crate::spec_fetch::AuthMode;
 use crate::spec_registry::{self, SpecSource};
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         Command::Version => Ok(version_text()),
         Command::Help => Ok(help_text()),
         Command::Spec(spec_command) => run_spec_command(spec_command),
+        Command::Runtime(runtime_command) => runtime_server::run(runtime_command),
         Command::Unknown(command) => Err(format!("unknown command: {command}\n\n{}", help_text())),
     }
 }
@@ -15,12 +17,33 @@ enum Command {
     Version,
     Help,
     Spec(SpecCommand),
+    Runtime(RuntimeCommand),
     Unknown(String),
 }
 
 enum SpecCommand {
     Add(SpecAddArgs),
     List,
+}
+
+#[derive(Debug, Clone)]
+pub enum RuntimeCommand {
+    Serve(RuntimeServeArgs),
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeServeArgs {
+    pub config_path: PathBuf,
+    pub upstream_url: String,
+    pub listen_addr: String,
+    pub max_requests: Option<usize>,
+    pub validation_mode: ValidationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMode {
+    Warn,
+    Strict,
 }
 
 struct SpecAddArgs {
@@ -42,7 +65,76 @@ fn parse_command(args: &[String]) -> Command {
             Ok(command) => Command::Spec(command),
             Err(message) => Command::Unknown(format!("spec {message}")),
         },
+        Some("runtime") => match parse_runtime_command(args) {
+            Ok(command) => Command::Runtime(command),
+            Err(message) => Command::Unknown(format!("runtime {message}")),
+        },
         Some(other) => Command::Unknown(other.to_string()),
+    }
+}
+
+fn parse_runtime_command(args: &[String]) -> Result<RuntimeCommand, String> {
+    match args.get(2).map(String::as_str) {
+        Some("serve") => parse_runtime_serve(args),
+        Some(other) => Err(format!("unknown subcommand: {other}")),
+        None => Err("missing subcommand".to_string()),
+    }
+}
+
+fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
+    let mut config_path: Option<PathBuf> = None;
+    let mut upstream_url: Option<String> = None;
+    let mut listen_addr: String = "127.0.0.1:3000".to_string();
+    let mut max_requests: Option<usize> = None;
+    let mut validation_mode = ValidationMode::Warn;
+    let mut position = 3;
+
+    while position < args.len() {
+        let flag = args[position].as_str();
+        let value = args
+            .get(position + 1)
+            .ok_or_else(|| format!("missing value for flag: {flag}"))?
+            .to_string();
+
+        match flag {
+            "--config" => config_path = Some(PathBuf::from(value)),
+            "--upstream" => upstream_url = Some(value),
+            "--listen" => listen_addr = value,
+            "--max-requests" => {
+                let parsed = value
+                    .parse::<usize>()
+                    .map_err(|_| "--max-requests expects positive integer".to_string())?;
+                if parsed == 0 {
+                    return Err("--max-requests expects positive integer".to_string());
+                }
+                max_requests = Some(parsed);
+            }
+            "--validation-mode" => {
+                validation_mode = parse_validation_mode(&value)?;
+            }
+            _ => return Err(format!("unknown flag: {flag}")),
+        }
+
+        position += 2;
+    }
+
+    let config_path = config_path.ok_or_else(|| "missing required flag: --config".to_string())?;
+    let upstream_url = upstream_url.ok_or_else(|| "missing required flag: --upstream".to_string())?;
+
+    Ok(RuntimeCommand::Serve(RuntimeServeArgs {
+        config_path,
+        upstream_url,
+        listen_addr,
+        max_requests,
+        validation_mode,
+    }))
+}
+
+fn parse_validation_mode(value: &str) -> Result<ValidationMode, String> {
+    match value {
+        "warn" => Ok(ValidationMode::Warn),
+        "strict" => Ok(ValidationMode::Strict),
+        _ => Err("--validation-mode expects one of: warn, strict".to_string()),
     }
 }
 
@@ -136,11 +228,12 @@ fn run_spec_command(command: SpecCommand) -> Result<String, String> {
             }
 
             let mut output =
-                String::from("service\tdigest\tsource_format\tspec_kind\tdeclared_version\tsource\n");
+                String::from("service\tactive\tdigest\tsource_format\tspec_kind\tdeclared_version\tsource\n");
             for entry in entries {
                 output.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\n",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                     entry.service_id,
+                    if entry.active { "yes" } else { "no" },
                     entry.digest,
                     entry.source_format,
                     entry.spec_kind,
@@ -178,7 +271,7 @@ fn version_text() -> String {
 }
 
 fn help_text() -> String {
-    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list"
+    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n    runtime  Run runtime proxy server\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list\n\nRUNTIME COMMANDS:\n    runtime serve --config <path> --upstream <url> [--listen <addr>] [--max-requests <n>] [--validation-mode <warn|strict>]"
         .to_string()
 }
 
@@ -205,6 +298,7 @@ mod tests {
         assert!(actual.contains("USAGE:"));
         assert!(actual.contains("version"));
         assert!(actual.contains("spec add"));
+        assert!(actual.contains("runtime serve"));
     }
 
     #[test]

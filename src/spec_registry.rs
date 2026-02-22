@@ -22,9 +22,19 @@ pub struct StoredSpec {
 }
 
 #[derive(Debug, Clone)]
+pub struct ActiveSpec {
+    pub service_id: String,
+    pub digest: String,
+    pub spec_kind: String,
+    pub declared_version: String,
+    pub spec_file: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct SpecListEntry {
     pub service_id: String,
     pub digest: String,
+    pub active: bool,
     pub source_format: String,
     pub spec_kind: String,
     pub declared_version: String,
@@ -40,6 +50,11 @@ struct SpecMetadata {
     declared_version: String,
     source: String,
     stored_at_epoch_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct ServiceState {
+    active_digest: Option<String>,
 }
 
 pub fn add_spec(service_id: &str, source: SpecSource) -> Result<StoredSpec, String> {
@@ -77,6 +92,8 @@ pub fn add_spec(service_id: &str, source: SpecSource) -> Result<StoredSpec, Stri
     fs::write(metadata_file, metadata_json)
         .map_err(|error| format!("failed to write metadata file: {error}"))?;
 
+    set_active_digest(service_id, &digest)?;
+
     Ok(StoredSpec {
         service_id: service_id.to_string(),
         digest,
@@ -102,6 +119,8 @@ pub fn list_specs() -> Result<Vec<SpecListEntry>, String> {
             .ok_or_else(|| "invalid service directory name".to_string())?
             .to_string();
 
+        let service_state = read_service_state(&service_dir)?;
+
         let version_dirs = read_sorted_directories(&service_dir)?;
         for version_dir in version_dirs {
             let metadata_file = version_dir.join("metadata.json");
@@ -113,10 +132,12 @@ pub fn list_specs() -> Result<Vec<SpecListEntry>, String> {
                 .map_err(|error| format!("failed to read metadata file: {error}"))?;
             let metadata: SpecMetadata = serde_json::from_slice(&metadata_raw)
                 .map_err(|error| format!("failed to parse metadata file: {error}"))?;
+            let is_active = service_state.active_digest.as_deref() == Some(metadata.digest.as_str());
 
             entries.push(SpecListEntry {
                 service_id: service_id.clone(),
                 digest: metadata.digest,
+                active: is_active,
                 source_format: metadata.source_format,
                 spec_kind: metadata.spec_kind,
                 declared_version: metadata.declared_version,
@@ -132,6 +153,41 @@ pub fn list_specs() -> Result<Vec<SpecListEntry>, String> {
     });
 
     Ok(entries)
+}
+
+pub fn resolve_active_spec(service_id: &str) -> Result<Option<ActiveSpec>, String> {
+    validate_service_id(service_id)?;
+
+    let root = registry_root_dir()?;
+    let service_dir = root.join(service_id);
+    if !service_dir.exists() {
+        return Ok(None);
+    }
+
+    let service_state = read_service_state(&service_dir)?;
+    let digest = match service_state.active_digest {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let version_dir = service_dir.join(&digest);
+    if !version_dir.exists() {
+        return Ok(None);
+    }
+
+    let metadata = read_metadata(&version_dir)?;
+    let spec_file = version_dir.join(format!("spec.{}", metadata.source_format));
+    if !spec_file.exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(ActiveSpec {
+        service_id: metadata.service_id,
+        digest: metadata.digest,
+        spec_kind: metadata.spec_kind,
+        declared_version: metadata.declared_version,
+        spec_file,
+    }))
 }
 
 fn registry_root_dir() -> Result<PathBuf, String> {
@@ -185,6 +241,41 @@ fn read_sorted_directories(path: &Path) -> Result<Vec<PathBuf>, String> {
 
     dirs.sort();
     Ok(dirs)
+}
+
+fn read_metadata(version_dir: &Path) -> Result<SpecMetadata, String> {
+    let metadata_file = version_dir.join("metadata.json");
+    let metadata_raw = fs::read(&metadata_file)
+        .map_err(|error| format!("failed to read metadata file: {error}"))?;
+    serde_json::from_slice(&metadata_raw)
+        .map_err(|error| format!("failed to parse metadata file: {error}"))
+}
+
+fn read_service_state(service_dir: &Path) -> Result<ServiceState, String> {
+    let state_file = service_dir.join("service_state.json");
+    if !state_file.exists() {
+        return Ok(ServiceState::default());
+    }
+
+    let raw = fs::read(&state_file)
+        .map_err(|error| format!("failed to read service state file: {error}"))?;
+    serde_json::from_slice(&raw)
+        .map_err(|error| format!("failed to parse service state file: {error}"))
+}
+
+fn set_active_digest(service_id: &str, digest: &str) -> Result<(), String> {
+    let root = registry_root_dir()?;
+    let service_dir = root.join(service_id);
+    fs::create_dir_all(&service_dir)
+        .map_err(|error| format!("failed to create service directory: {error}"))?;
+
+    let state = ServiceState {
+        active_digest: Some(digest.to_string()),
+    };
+    let state_json = serde_json::to_vec_pretty(&state)
+        .map_err(|error| format!("failed to encode service state: {error}"))?;
+    fs::write(service_dir.join("service_state.json"), state_json)
+        .map_err(|error| format!("failed to write service state file: {error}"))
 }
 
 fn current_epoch_seconds() -> u64 {
