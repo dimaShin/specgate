@@ -31,13 +31,21 @@ pub enum RuntimeCommand {
     Serve(RuntimeServeArgs),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMode {
+    Proxy,
+    Mock,
+    MockPartial,
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeServeArgs {
     pub config_path: PathBuf,
-    pub upstream_url: String,
+    pub upstream_url: Option<String>,
     pub listen_addr: String,
     pub max_requests: Option<usize>,
     pub validation_mode: ValidationMode,
+    pub mode: RuntimeMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,10 +91,11 @@ fn parse_runtime_command(args: &[String]) -> Result<RuntimeCommand, String> {
 
 fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
     let mut config_path: Option<PathBuf> = None;
-    let mut upstream_url: Option<String> = None;
+    let mut upstream_url = None;
     let mut listen_addr: String = "127.0.0.1:3000".to_string();
     let mut max_requests: Option<usize> = None;
     let mut validation_mode = ValidationMode::Warn;
+    let mut mode = RuntimeMode::Proxy;
     let mut position = 3;
 
     while position < args.len() {
@@ -112,6 +121,9 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
             "--validation-mode" => {
                 validation_mode = parse_validation_mode(&value)?;
             }
+            "--mode" => {
+                mode = parse_runtime_mode(&value)?;
+            }
             _ => return Err(format!("unknown flag: {flag}")),
         }
 
@@ -119,7 +131,9 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
     }
 
     let config_path = config_path.ok_or_else(|| "missing required flag: --config".to_string())?;
-    let upstream_url = upstream_url.ok_or_else(|| "missing required flag: --upstream".to_string())?;
+    if matches!(mode, RuntimeMode::Proxy | RuntimeMode::MockPartial) && upstream_url.is_none() {
+        return Err("missing required flag for mode requiring upstream: --upstream".to_string());
+    }
 
     Ok(RuntimeCommand::Serve(RuntimeServeArgs {
         config_path,
@@ -127,7 +141,17 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
         listen_addr,
         max_requests,
         validation_mode,
+        mode,
     }))
+}
+
+fn parse_runtime_mode(value: &str) -> Result<RuntimeMode, String> {
+    match value {
+        "proxy" => Ok(RuntimeMode::Proxy),
+        "mock" => Ok(RuntimeMode::Mock),
+        "mock-partial" => Ok(RuntimeMode::MockPartial),
+        _ => Err("--mode expects one of: proxy, mock, mock-partial".to_string()),
+    }
 }
 
 fn parse_validation_mode(value: &str) -> Result<ValidationMode, String> {
@@ -271,7 +295,7 @@ fn version_text() -> String {
 }
 
 fn help_text() -> String {
-    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n    runtime  Run runtime proxy server\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list\n\nRUNTIME COMMANDS:\n    runtime serve --config <path> --upstream <url> [--listen <addr>] [--max-requests <n>] [--validation-mode <warn|strict>]"
+    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n    runtime  Run runtime proxy/mock server\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list\n\nRUNTIME COMMANDS:\n    runtime serve --config <path> [--mode <proxy|mock|mock-partial>] [--upstream <url>] [--listen <addr>] [--max-requests <n>] [--validation-mode <warn|strict>]"
         .to_string()
 }
 
@@ -315,5 +339,53 @@ mod tests {
         let error = run(&args(&["specgate", "spec"])).expect_err("expected spec command to fail");
 
         assert!(error.contains("unknown command: spec missing subcommand"));
+    }
+
+    #[test]
+    fn runtime_mock_mode_allows_missing_upstream() {
+        let command = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+            "--mode",
+            "mock",
+        ]))
+        .expect("expected runtime command");
+
+        let RuntimeCommand::Serve(serve_args) = command;
+        assert_eq!(serve_args.mode, RuntimeMode::Mock);
+        assert_eq!(serve_args.upstream_url, None);
+    }
+
+    #[test]
+    fn runtime_proxy_mode_requires_upstream() {
+        let error = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+        ]))
+        .expect_err("expected runtime parsing to fail");
+
+        assert!(error.contains("missing required flag for mode requiring upstream: --upstream"));
+    }
+
+    #[test]
+    fn runtime_mock_partial_mode_requires_upstream() {
+        let error = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+            "--mode",
+            "mock-partial",
+        ]))
+        .expect_err("expected runtime parsing to fail");
+
+        assert!(error.contains("missing required flag for mode requiring upstream: --upstream"));
     }
 }

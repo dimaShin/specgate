@@ -10,9 +10,10 @@ Build a Rust CLI tool that:
 
 1. Manages API specs (store locally, optionally fetch from URL), starting with OpenAPI and extending to GraphQL and gRPC without redesign.
 2. Generates typed client/server models/code for multiple languages (initial focus: Java; TS as reference; extensible plugin-like architecture).
-3. Runs an HTTP server in two modes:
+3. Runs an HTTP server in proxy + mock capabilities:
    - proxy mode: forwards traffic to upstream, records requests/responses to filesystem for later use as mocks
-   - mock mode: serves recorded fixtures (or generated examples) without upstream
+   - mock mode (full): serves recorded fixtures (or generated examples) without upstream; missing route/fixture returns 404
+   - mock-partial mode: serves fixture when present, otherwise proxies to upstream
 4. Validates inbound/outbound payloads against the active spec adapter at runtime, emits warnings, and writes a summary report.
 5. Solves CORS for local dev by injecting appropriate CORS headers.
 6. Works in CI: deterministic output, exit codes, non-interactive operation.

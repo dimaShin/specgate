@@ -79,6 +79,52 @@ cargo run -- spec add --service internal --url https://example.com/v3/api-docs -
 cargo run -- spec list
 ```
 
+## Runtime server modes
+
+### Proxy mode (default)
+
+```bash
+cargo run -- runtime serve --config ./runtime.yaml --upstream http://127.0.0.1:8080
+```
+
+### Mock mode (fixture-backed)
+
+```bash
+cargo run -- runtime serve --config ./runtime.yaml --mode mock
+```
+
+Mock mode is fully offline. If no route matches or no fixture exists, response is `404` with `x-specgate-mock: miss`.
+
+### Mock partial mode (fixture-first with upstream fallback)
+
+```bash
+cargo run -- runtime serve --config ./runtime.yaml --mode mock-partial --upstream http://127.0.0.1:8080
+```
+
+Mock partial mode returns fixture responses when present and proxies to upstream when fixture is missing.
+Responses include `x-specgate-mock: hit` for fixture responses and `x-specgate-mock: fallback` for upstream fallback responses.
+
+Mock fixtures are loaded from:
+
+- `$SPECGATE_MOCK_DIR` when set, or
+- `$SPECGATE_REGISTRY_DIR/mocks` when using a custom registry root, or
+- `./.specgate/mocks` by default.
+
+Fixture path pattern:
+
+- `<root>/<service_id>/<METHOD>__<path-segments>.json`
+- Example for `GET /pet/health`: `mocks/pet/GET__pet__health.json`
+
+Fixture JSON shape:
+
+```json
+{
+	"status": 200,
+	"headers": { "content-type": "application/json" },
+	"body": "{\"ok\":true}"
+}
+```
+
 ### Public endpoints for manual testing
 
 - OpenAPI 3 JSON: https://petstore3.swagger.io/api/v3/openapi.json
