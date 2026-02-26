@@ -104,6 +104,27 @@ cargo run -- runtime serve --config ./runtime.yaml --mode mock-partial --upstrea
 Mock partial mode returns fixture responses when present and proxies to upstream when fixture is missing.
 Responses include `x-specgate-mock: hit` for fixture responses and `x-specgate-mock: fallback` for upstream fallback responses.
 
+## Local sidecar quickstart
+
+Build the executable:
+
+```bash
+cargo build --release
+```
+
+Run as local sidecar in proxy mode:
+
+```bash
+SPECGATE_REGISTRY_DIR=/tmp/specgate-localtest/registry \
+./target/release/specgate runtime serve \
+	--config ./runtime.yaml \
+	--mode proxy \
+	--upstream http://127.0.0.1:8080 \
+	--listen 127.0.0.1:18080
+```
+
+Point your existing application to `http://127.0.0.1:18080` to test through the sidecar.
+
 Mock fixtures are loaded from:
 
 - `$SPECGATE_MOCK_DIR` when set, or
@@ -130,6 +151,28 @@ Fixture JSON shape:
 - OpenAPI 3 JSON: https://petstore3.swagger.io/api/v3/openapi.json
 - OpenAPI 3 YAML: https://raw.githubusercontent.com/swagger-api/swagger-petstore/master/src/main/resources/openapi.yaml
 - Swagger 2 JSON (expected reject in current version): https://petstore.swagger.io/v2/swagger.json
+
+## Manual versioned artifacts (no CI/CD)
+
+Generate versioned release tarballs and checksums from your machine:
+
+```bash
+./scripts/release-local.sh
+```
+
+Output is written to `dist/v<VERSION>/` and includes:
+
+- macOS arm64 tarball: `specgate-v<VERSION>-aarch64-apple-darwin.tar.gz` (when built)
+- Linux x86_64 glibc tarball: `specgate-v<VERSION>-x86_64-unknown-linux-gnu.tar.gz` (when built)
+- checksum manifest: `SHA256SUMS`
+
+Generate a Homebrew formula from local checksums:
+
+```bash
+./scripts/generate-homebrew-formula.sh --version <VERSION> --repo <owner>/<repo>
+```
+
+For full manual publishing and Homebrew tap steps, see `docs/release-manual.md`.
 
 ## Versioning approach
 
