@@ -29,6 +29,12 @@ enum SpecCommand {
 #[derive(Debug, Clone)]
 pub enum RuntimeCommand {
     Serve(RuntimeServeArgs),
+    InitMocks(RuntimeInitMocksArgs),
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeInitMocksArgs {
+    pub config_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +52,13 @@ pub struct RuntimeServeArgs {
     pub max_requests: Option<usize>,
     pub validation_mode: ValidationMode,
     pub mode: RuntimeMode,
+    pub mock_partial_fallback: MockPartialFallbackMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MockPartialFallbackMode {
+    Structural,
+    Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +97,33 @@ fn parse_command(args: &[String]) -> Command {
 fn parse_runtime_command(args: &[String]) -> Result<RuntimeCommand, String> {
     match args.get(2).map(String::as_str) {
         Some("serve") => parse_runtime_serve(args),
+        Some("init-mocks") => parse_runtime_init_mocks(args),
         Some(other) => Err(format!("unknown subcommand: {other}")),
         None => Err("missing subcommand".to_string()),
     }
+}
+
+fn parse_runtime_init_mocks(args: &[String]) -> Result<RuntimeCommand, String> {
+    let mut config_path: Option<PathBuf> = None;
+    let mut position = 3;
+
+    while position < args.len() {
+        let flag = args[position].as_str();
+        let value = args
+            .get(position + 1)
+            .ok_or_else(|| format!("missing value for flag: {flag}"))?
+            .to_string();
+
+        match flag {
+            "--config" => config_path = Some(PathBuf::from(value)),
+            _ => return Err(format!("unknown flag: {flag}")),
+        }
+
+        position += 2;
+    }
+
+    let config_path = config_path.ok_or_else(|| "missing required flag: --config".to_string())?;
+    Ok(RuntimeCommand::InitMocks(RuntimeInitMocksArgs { config_path }))
 }
 
 fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
@@ -96,6 +133,7 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
     let mut max_requests: Option<usize> = None;
     let mut validation_mode = ValidationMode::Warn;
     let mut mode = RuntimeMode::Proxy;
+    let mut mock_partial_fallback = MockPartialFallbackMode::Structural;
     let mut position = 3;
 
     while position < args.len() {
@@ -124,6 +162,9 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
             "--mode" => {
                 mode = parse_runtime_mode(&value)?;
             }
+            "--mock-partial-fallback" => {
+                mock_partial_fallback = parse_mock_partial_fallback_mode(&value)?;
+            }
             _ => return Err(format!("unknown flag: {flag}")),
         }
 
@@ -142,6 +183,7 @@ fn parse_runtime_serve(args: &[String]) -> Result<RuntimeCommand, String> {
         max_requests,
         validation_mode,
         mode,
+        mock_partial_fallback,
     }))
 }
 
@@ -159,6 +201,14 @@ fn parse_validation_mode(value: &str) -> Result<ValidationMode, String> {
         "warn" => Ok(ValidationMode::Warn),
         "strict" => Ok(ValidationMode::Strict),
         _ => Err("--validation-mode expects one of: warn, strict".to_string()),
+    }
+}
+
+fn parse_mock_partial_fallback_mode(value: &str) -> Result<MockPartialFallbackMode, String> {
+    match value {
+        "structural" => Ok(MockPartialFallbackMode::Structural),
+        "any" => Ok(MockPartialFallbackMode::Any),
+        _ => Err("--mock-partial-fallback expects one of: structural, any".to_string()),
     }
 }
 
@@ -295,7 +345,7 @@ fn version_text() -> String {
 }
 
 fn help_text() -> String {
-    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n    runtime  Run runtime proxy/mock server\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list\n\nRUNTIME COMMANDS:\n    runtime serve --config <path> [--mode <proxy|mock|mock-partial>] [--upstream <url>] [--listen <addr>] [--max-requests <n>] [--validation-mode <warn|strict>]"
+    "specgate 0.1.0\n\nUSAGE:\n    specgate <COMMAND>\n\nCOMMANDS:\n    version  Print CLI version\n    help     Print this help text\n    spec     Manage API specs\n    runtime  Run runtime proxy/mock server\n\nSPEC COMMANDS:\n    spec add --service <id> --file <path>\n    spec add --service <id> --url <url> [--auth-bearer <token> | --auth-basic <user:pass> | --auth-apikey-header <header:value> | --auth-apikey-query <key:value>]\n    spec list\n\nRUNTIME COMMANDS:\n    runtime serve --config <path> [--mode <proxy|mock|mock-partial>] [--upstream <url>] [--listen <addr>] [--max-requests <n>] [--validation-mode <warn|strict>] [--mock-partial-fallback <structural|any>]\n    runtime init-mocks --config <path>"
         .to_string()
 }
 
@@ -354,7 +404,9 @@ mod tests {
         ]))
         .expect("expected runtime command");
 
-        let RuntimeCommand::Serve(serve_args) = command;
+        let RuntimeCommand::Serve(serve_args) = command else {
+            panic!("expected serve command variant");
+        };
         assert_eq!(serve_args.mode, RuntimeMode::Mock);
         assert_eq!(serve_args.upstream_url, None);
     }
@@ -387,5 +439,98 @@ mod tests {
         .expect_err("expected runtime parsing to fail");
 
         assert!(error.contains("missing required flag for mode requiring upstream: --upstream"));
+    }
+
+    #[test]
+    fn runtime_mock_partial_fallback_defaults_to_structural() {
+        let command = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+            "--mode",
+            "mock-partial",
+            "--upstream",
+            "http://127.0.0.1:8080",
+        ]))
+        .expect("expected runtime command");
+
+        let RuntimeCommand::Serve(serve_args) = command else {
+            panic!("expected serve command variant");
+        };
+        assert_eq!(
+            serve_args.mock_partial_fallback,
+            MockPartialFallbackMode::Structural
+        );
+    }
+
+    #[test]
+    fn runtime_mock_partial_fallback_accepts_any() {
+        let command = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+            "--mode",
+            "mock-partial",
+            "--upstream",
+            "http://127.0.0.1:8080",
+            "--mock-partial-fallback",
+            "any",
+        ]))
+        .expect("expected runtime command");
+
+        let RuntimeCommand::Serve(serve_args) = command else {
+            panic!("expected serve command variant");
+        };
+        assert_eq!(serve_args.mock_partial_fallback, MockPartialFallbackMode::Any);
+    }
+
+    #[test]
+    fn runtime_mock_partial_fallback_rejects_invalid_value() {
+        let error = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "serve",
+            "--config",
+            "runtime.yaml",
+            "--mode",
+            "mock-partial",
+            "--upstream",
+            "http://127.0.0.1:8080",
+            "--mock-partial-fallback",
+            "nope",
+        ]))
+        .expect_err("expected runtime parsing to fail");
+
+        assert!(error.contains("--mock-partial-fallback expects one of: structural, any"));
+    }
+
+    #[test]
+    fn runtime_init_mocks_requires_config() {
+        let error = parse_runtime_command(&args(&["specgate", "runtime", "init-mocks"]))
+            .expect_err("expected init-mocks parsing to fail");
+
+        assert!(error.contains("missing required flag: --config"));
+    }
+
+    #[test]
+    fn runtime_init_mocks_parses_config() {
+        let command = parse_runtime_command(&args(&[
+            "specgate",
+            "runtime",
+            "init-mocks",
+            "--config",
+            "runtime.yaml",
+        ]))
+        .expect("expected init-mocks command");
+
+        let RuntimeCommand::InitMocks(init_args) = command else {
+            panic!("expected init-mocks command variant");
+        };
+
+        assert_eq!(init_args.config_path, PathBuf::from("runtime.yaml"));
     }
 }

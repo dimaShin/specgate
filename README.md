@@ -81,28 +81,118 @@ cargo run -- spec list
 
 ## Runtime server modes
 
+Design source of truth for upcoming flexible deterministic mocking:
+
+- `docs/runtime-mocking-design.md`
+
 ### Proxy mode (default)
 
 ```bash
 cargo run -- runtime serve --config ./runtime.yaml --upstream http://127.0.0.1:8080
 ```
 
-### Mock mode (fixture-backed)
+### Mock mode (scenario-manifest)
 
 ```bash
 cargo run -- runtime serve --config ./runtime.yaml --mode mock
 ```
 
-Mock mode is fully offline. If no route matches or no fixture exists, response is `404` with `x-specgate-mock: miss`.
+Mock mode is fully offline. If no route matches, no scenario manifest exists, or no scenario matches, response is `404` with `x-specgate-mock: miss`.
 
-### Mock partial mode (fixture-first with upstream fallback)
+For developer experience, missing service manifests are auto-generated on runtime startup at `<mock-root>/<service_id>/scenarios.yaml`.
+
+### Mock partial mode (scenario-first with upstream fallback)
 
 ```bash
 cargo run -- runtime serve --config ./runtime.yaml --mode mock-partial --upstream http://127.0.0.1:8080
 ```
 
-Mock partial mode returns fixture responses when present and proxies to upstream when fixture is missing.
-Responses include `x-specgate-mock: hit` for fixture responses and `x-specgate-mock: fallback` for upstream fallback responses.
+Optional fallback policy:
+
+```bash
+cargo run -- runtime serve --config ./runtime.yaml --mode mock-partial --upstream http://127.0.0.1:8080 --mock-partial-fallback any
+```
+
+Optional pre-generation command (without starting server):
+
+```bash
+cargo run -- runtime init-mocks --config ./runtime.yaml
+```
+
+Mock partial mode resolves responses from scenario manifests and proxies upstream when no scenario path resolves per configured fallback policy.
+Responses include `x-specgate-mock: hit` for scenario hits and `x-specgate-mock: fallback` for service/global/upstream fallback responses.
+
+Planned behavior is configurable fallback with a strict default: upstream fallback only when no structural scenario match exists.
+See `docs/runtime-mocking-design.md` for precedence and matching semantics.
+
+Scenario manifests now support stateful transitions and JWT-claims auth predicates (`subject`, `roles`, `attributes`).
+State is persisted under `<mock-root>/state/<service_id>.json`.
+Raw bearer tokens are not persisted; optional token fingerprint matching is controlled via `SPECGATE_TOKEN_FINGERPRINT=1`.
+Deterministic matcher additions include `body_json` dot-path selectors and `expr` clauses with `==` and `&&`.
+
+### Scenario manifest example
+
+Create `mocks/pet/scenarios.yaml`:
+
+```yaml
+scenarios:
+	- id: create-order-init
+		priority: 100
+		when:
+			method: POST
+			path: /pet/orders
+			query:
+				mode: sync
+			headers:
+				x-region: eu
+			auth:
+				subject: user-42
+				roles: [admin]
+				attributes:
+					tenant: acme
+			body_json:
+				customer.tier: gold
+			expr: body.customer.id == "42" && auth.attr.tenant == "acme"
+		state:
+			key: order-flow
+			set: started
+		respond:
+			status: 201
+			headers:
+				content-type: application/json
+			body: '{"result":"created"}'
+
+	- id: create-order-next
+		priority: 90
+		when:
+			method: POST
+			path: /pet/orders/confirm
+			auth:
+				subject: user-42
+		state:
+			key: order-flow
+			requires: started
+		respond:
+			status: 200
+			body: '{"result":"confirmed"}'
+
+fallback:
+	status: 503
+	body: '{"error":"scenario_miss"}'
+```
+
+Send a matching request:
+
+```http
+POST /pet/orders?mode=sync
+Authorization: Bearer <jwt-with-sub-user-42-roles-admin-tenant-acme>
+X-Region: eu
+Content-Type: application/json
+
+{"customer":{"id":42,"tier":"gold"}}
+```
+
+The first hit writes `state/pet.json` with `order-flow=started`, enabling the follow-up scenario.
 
 ## Local sidecar quickstart
 
@@ -125,18 +215,18 @@ SPECGATE_REGISTRY_DIR=/tmp/specgate-localtest/registry \
 
 Point your existing application to `http://127.0.0.1:18080` to test through the sidecar.
 
-Mock fixtures are loaded from:
+Mock data is loaded from:
 
 - `$SPECGATE_MOCK_DIR` when set, or
 - `$SPECGATE_REGISTRY_DIR/mocks` when using a custom registry root, or
 - `./.specgate/mocks` by default.
 
-Fixture path pattern:
+Scenario manifest path:
 
-- `<root>/<service_id>/<METHOD>__<path-segments>.json`
-- Example for `GET /pet/health`: `mocks/pet/GET__pet__health.json`
+- `<root>/<service_id>/scenarios.yaml` (or `scenarios.yml` / `scenarios.json`)
+- If missing, `specgate` generates a starter `scenarios.yaml` template automatically.
 
-Fixture JSON shape:
+Optional fixture JSON shape (when referenced from `respond.fixture`):
 
 ```json
 {
@@ -145,6 +235,8 @@ Fixture JSON shape:
 	"body": "{\"ok\":true}"
 }
 ```
+
+Legacy `<METHOD>__<path>.json` lookup is not supported.
 
 ### Public endpoints for manual testing
 

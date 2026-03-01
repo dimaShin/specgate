@@ -18,6 +18,7 @@ Use this to keep agent context minimal while still discoverable.
 
 ### Proxy or mock runtime / traffic recording / CORS
 - `skills/runtime-server.md`
+- `docs/runtime-mocking-design.md`
 
 ### Runtime schema validation / warning-strict behavior / report lifecycle
 - `skills/validation-reporting.md`

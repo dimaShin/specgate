@@ -1,5 +1,8 @@
 # Skill: Spec Management
 
+Related runtime auth/mocking policy reference:
+- `docs/runtime-mocking-design.md`
+
 ## Scope
 - Own only spec ingestion and local registry behavior.
 - Include URL fetch from day 0 (not optional).
@@ -28,6 +31,7 @@
 - Active-spec selection is deterministic per service; new ingest auto-activates the latest digest.
 - Clear failure messages for file IO, URL fetch, auth, timeout, and unsupported protocol/version.
 - Output model includes protocol-neutral identity fields (for example: spec kind + declared version) so later adapters do not require schema redesign.
+- Auth-related diagnostics and persisted metadata avoid leaking raw secrets.
 
 ## MVP (next)
 - Add `spec show` and `spec remove` commands.

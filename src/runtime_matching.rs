@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +57,14 @@ impl PrefixServiceMatcher {
             .iter()
             .find(|route| matches_prefix(request_path, &route.prefix))
             .map(|route| route.service_id.as_str())
+    }
+
+    pub fn service_ids(&self) -> Vec<String> {
+        let mut ids = BTreeSet::new();
+        for route in &self.routes {
+            ids.insert(route.service_id.clone());
+        }
+        ids.into_iter().collect()
     }
 }
 
